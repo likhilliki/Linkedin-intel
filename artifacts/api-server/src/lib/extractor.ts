@@ -67,19 +67,28 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+let _dailyQuotaExhausted = false;
+export function isGeminiQuotaExhausted(): boolean { return _dailyQuotaExhausted; }
+
+function isDailyQuotaExhausted(err: unknown): boolean {
+  const msg = String((err as Error).message || "");
+  return msg.includes("GenerateRequestsPerDayPerProjectPerModel") ||
+    (msg.includes("generate_content_free_tier_requests") && msg.includes("limit: 0"));
+}
+
 function extractRetryDelayMs(err: unknown): number {
   try {
     const msg = String((err as Error).message || "");
-    const match = msg.match(/retry(?:Delay)?[": ]+(\d+(?:\.\d+)?)s/i);
-    if (match) return Math.ceil(parseFloat(match[1]) * 1000) + 1000;
-    if (msg.includes("429")) return 12000;
+    const match = msg.match(/retryDelay[": ]+(\d+)s/i) || msg.match(/retry in (\d+(?:\.\d+)?)s/i);
+    if (match) return Math.ceil(parseFloat(match[1]) * 1000) + 500;
+    if (msg.includes("429")) return 8000;
   } catch {
     // ignore
   }
-  return 10000;
+  return 6000;
 }
 
-async function callGeminiWithRetry(prompt: string, content: string, maxRetries = 4): Promise<string> {
+async function callGeminiWithRetry(prompt: string, content: string, maxRetries = 3): Promise<string> {
   const client = getGeminiClient();
   const model = client.getGenerativeModel({
     model: "gemini-2.5-flash",
@@ -99,7 +108,12 @@ async function callGeminiWithRetry(prompt: string, content: string, maxRetries =
       lastErr = err;
       const status = (err as { status?: number }).status;
       if (status === 429) {
-        const delayMs = extractRetryDelayMs(err) * (attempt + 1);
+        if (isDailyQuotaExhausted(err)) {
+          _dailyQuotaExhausted = true;
+          logger.warn("Gemini daily quota exhausted — using fallback immediately");
+          throw err;
+        }
+        const delayMs = extractRetryDelayMs(err);
         logger.warn({ attempt, delayMs }, "Gemini rate limited — retrying after delay");
         await sleep(delayMs);
         continue;
@@ -110,6 +124,10 @@ async function callGeminiWithRetry(prompt: string, content: string, maxRetries =
   throw lastErr;
 }
 
+export function isGeminiDailyQuotaError(err: unknown): boolean {
+  return isDailyQuotaExhausted(err);
+}
+
 export async function extractJobData(
   postText: string,
   postId: string,
@@ -117,7 +135,8 @@ export async function extractJobData(
   authorLinkedinUrl: string | null,
   postUrl: string | null,
   datePosted: string | null,
-  keywordMatched: string | null
+  keywordMatched: string | null,
+  skipLLM = false
 ): Promise<ExtractedJobData> {
   const contextualText = `
 LinkedIn Post by: ${authorName || "Unknown"}
@@ -127,6 +146,19 @@ Date Posted: ${datePosted || "N/A"}
 ---
 ${postText}
   `.trim();
+
+  if (skipLLM) {
+    return {
+      postId,
+      role: null, companyName: null, location: null,
+      primarySkills: null, secondarySkills: null, mustToHave: null,
+      yearsOfExperience: null, lookingForCollegeStudents: null, intern: null,
+      salaryPackage: null,
+      email: extractEmail(postText), phone: extractPhone(postText),
+      hiringIntent: null, authorName, authorLinkedinUrl, postUrl, datePosted,
+      keywordMatched, rawText: postText,
+    };
+  }
 
   try {
     const rawContent = await callGeminiWithRetry(EXTRACTION_PROMPT, contextualText);

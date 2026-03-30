@@ -4,7 +4,7 @@ import { eq, desc } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { logger } from "./logger";
 import { scrapeLinkedInPosts } from "./apify";
-import { extractJobData } from "./extractor";
+import { extractJobData, isGeminiQuotaExhausted, isGeminiDailyQuotaError } from "./extractor";
 import { ensureCollection, isPostDuplicate, upsertPostVector } from "./qdrant";
 import { ensureSheetHeaders, appendRowToSheet } from "./sheets";
 
@@ -71,6 +71,7 @@ async function executeRun(runId: string, keywords: string[], maxResults: number)
     let totalProcessed = 0;
     let totalDuplicates = 0;
     let totalErrors = 0;
+    let geminiQuotaExhausted = false;
 
     for (const post of posts) {
       try {
@@ -89,7 +90,8 @@ async function executeRun(runId: string, keywords: string[], maxResults: number)
           post.authorLinkedinUrl,
           post.postUrl,
           post.datePosted,
-          keyword
+          keyword,
+          geminiQuotaExhausted || isGeminiQuotaExhausted()
         );
 
         const sheetRowId = await appendRowToSheet({
@@ -115,7 +117,7 @@ async function executeRun(runId: string, keywords: string[], maxResults: number)
           keywordMatched: extracted.keywordMatched,
         });
 
-        await db.insert(jobRecordsTable).values({
+        const inserted = await db.insert(jobRecordsTable).values({
           postId: extracted.postId,
           role: extracted.role,
           companyName: extracted.companyName,
@@ -137,7 +139,7 @@ async function executeRun(runId: string, keywords: string[], maxResults: number)
           keywordMatched: extracted.keywordMatched,
           rawText: extracted.rawText,
           sheetRowId,
-        });
+        }).onConflictDoNothing();
 
         await upsertPostVector(post.postId, post.text, {
           post_id: post.postId,
@@ -155,9 +157,13 @@ async function executeRun(runId: string, keywords: string[], maxResults: number)
           .set({ totalProcessed, totalDuplicates, totalErrors })
           .where(eq(scraperRunsTable.runId, runId));
 
-        await sleep(4500);
+        await sleep(1500);
       } catch (err) {
         totalErrors++;
+        if (isGeminiDailyQuotaError(err) && !geminiQuotaExhausted) {
+          geminiQuotaExhausted = true;
+          log.warn("Gemini daily quota exhausted — remaining posts will use fallback (no LLM extraction)");
+        }
         log.error({ err, postId: post.postId }, "Failed to process post");
 
         await db
