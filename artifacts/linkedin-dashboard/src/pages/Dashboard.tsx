@@ -1,18 +1,19 @@
-import { useJobStats } from "@/hooks/use-jobs"
+import { useJobStats, useJobs } from "@/hooks/use-jobs"
 import { useKeywords } from "@/hooks/use-keywords"
 import { useScraperRuns, useStartScraperRun } from "@/hooks/use-scraper"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { ActivitySquare, Briefcase, Hash, Play, TrendingUp, Users } from "lucide-react"
+import { ActivitySquare, Briefcase, ExternalLink, Hash, Play, TrendingUp, Users } from "lucide-react"
 import { cn, formatRelativeTime } from "@/lib/utils"
 import { Link } from "wouter"
-import { ResponsiveContainer, AreaChart, Area, XAxis, Tooltip } from "recharts"
+import { ResponsiveContainer, AreaChart, Area } from "recharts"
 
 export default function Dashboard() {
   const { data: stats, isLoading: statsLoading } = useJobStats();
   const { data: keywordsData } = useKeywords();
   const { data: runsData } = useScraperRuns({ limit: 5 });
+  const { data: recentJobsData } = useJobs({ limit: 5 });
   const startRun = useStartScraperRun();
 
   const handleQuickRun = () => {
@@ -136,21 +137,37 @@ export default function Dashboard() {
               <Link href="/jobs" className="text-sm text-primary hover:underline">View All</Link>
             </CardHeader>
             <CardContent>
-              {stats?.topCompanies && stats.topCompanies.length > 0 ? (
-                 <div className="space-y-4 mt-4">
-                 {/* Just showing some mock representation based on stats since dashboard usually shows a feed */}
-                 {stats.topKeywords.slice(0, 5).map((kw, i) => (
-                   <div key={i} className="flex items-center justify-between p-4 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-colors">
-                     <div>
-                       <p className="font-medium text-white">Extracted from: {kw.keyword}</p>
-                       <p className="text-sm text-muted-foreground">{kw.count} records processed</p>
-                     </div>
-                     <Badge variant="success">Stored in Sheet</Badge>
-                   </div>
-                 ))}
-               </div>
+              {recentJobsData?.jobs && recentJobsData.jobs.length > 0 ? (
+                <div className="space-y-3 mt-4">
+                  {recentJobsData.jobs.map((job) => {
+                    const title = job.role || job.rawText?.slice(0, 60) || "LinkedIn Post";
+                    const company = job.companyName || job.authorName || "Unknown";
+                    const badge = job.hiringIntent || job.keywordMatched || "scraped";
+                    return (
+                      <div key={job.id} className="flex items-start justify-between gap-3 p-4 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-colors group">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-white truncate">{title}</p>
+                          <p className="text-sm text-muted-foreground truncate">{company} {job.location ? `· ${job.location}` : ""}</p>
+                          {job.primarySkills && (
+                            <p className="text-xs text-primary/80 mt-1 truncate">{job.primarySkills}</p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge variant="outline" className="text-xs border-white/10 text-muted-foreground capitalize">{badge}</Badge>
+                          {job.postUrl && (
+                            <a href={job.postUrl} target="_blank" rel="noopener noreferrer" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground hover:text-white" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               ) : (
-                <div className="py-8 text-center text-muted-foreground">No recent jobs found.</div>
+                <div className="py-8 text-center text-muted-foreground">
+                  {statsLoading ? "Loading..." : "No records yet. Run a scrape to start collecting data."}
+                </div>
               )}
             </CardContent>
           </Card>

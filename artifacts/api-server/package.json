@@ -23,6 +23,7 @@
     "openai": "^6.33.0",
     "pino": "^9",
     "pino-http": "^10",
+    "proxy-agent": "^7.0.0",
     "uuid": "^13.0.0",
     "zod": "catalog:"
   },

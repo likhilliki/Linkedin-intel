@@ -23,6 +23,11 @@ function getApifyClient(): ApifyClient {
   return apifyClient;
 }
 
+/**
+ * Scrape LinkedIn posts using supreme_coder~linkedin-post (PPR, no rental needed)
+ * Input: urls = [LinkedIn content search URL], maxItems = N
+ * Output fields: urn, text, url, postedAtISO, authorName, authorProfileUrl, numLikes, numComments
+ */
 export async function scrapeLinkedInPosts(
   keywords: string[],
   maxResultsPerKeyword = 50
@@ -34,10 +39,11 @@ export async function scrapeLinkedInPosts(
   for (const keyword of keywords) {
     logger.info({ keyword }, "Scraping LinkedIn posts for keyword");
     try {
-      const run = await client.actor("curious_coder/linkedin-post-search-scraper").call({
-        keywords: [keyword],
-        maxResults: maxResultsPerKeyword,
-        proxy: { useApifyProxy: true, apifyProxyGroups: ["RESIDENTIAL"] },
+      const searchUrl = `https://www.linkedin.com/search/results/content/?keywords=${encodeURIComponent(keyword)}&sortBy=%22date_posted%22`;
+
+      const run = await client.actor("supreme_coder/linkedin-post").call({
+        urls: [searchUrl],
+        maxItems: maxResultsPerKeyword,
       });
 
       const { items } = await client.dataset(run.defaultDatasetId).listItems();
@@ -48,25 +54,25 @@ export async function scrapeLinkedInPosts(
         const postId = extractPostId(raw);
         if (!postId) continue;
 
+        const text = String(raw["text"] || raw["postText"] || raw["content"] || "");
+        if (text.length < 30) continue;
+
         const post: LinkedInPost = {
           postId,
-          text: String(raw["text"] || raw["postText"] || raw["content"] || ""),
-          authorName: String(raw["authorName"] || raw["author"] || raw["name"] || ""),
-          authorLinkedinUrl: String(raw["authorUrl"] || raw["profileUrl"] || raw["authorProfileUrl"] || ""),
-          postUrl: String(raw["postUrl"] || raw["url"] || raw["link"] || ""),
-          datePosted: String(raw["postedAt"] || raw["date"] || raw["publishedAt"] || raw["createdAt"] || ""),
-          likesCount: Number(raw["likesCount"] || raw["likes"] || 0),
-          commentsCount: Number(raw["commentsCount"] || raw["comments"] || 0),
+          text,
+          authorName: String(raw["authorName"] || raw["author"] || ""),
+          authorLinkedinUrl: String(raw["authorProfileUrl"] || raw["authorUrl"] || ""),
+          postUrl: String(raw["url"] || raw["postUrl"] || ""),
+          datePosted: String(raw["postedAtISO"] || raw["postedAt"] || raw["postedAtTimestamp"] || ""),
+          likesCount: Number(raw["numLikes"] || raw["likesCount"] || raw["likes"] || 0),
+          commentsCount: Number(raw["numComments"] || raw["commentsCount"] || raw["comments"] || 0),
         };
 
-        if (post.text && post.text.length > 50) {
-          allPosts.push(post);
-          keywordMap.set(postId, keyword);
-        }
+        allPosts.push(post);
+        keywordMap.set(postId, keyword);
       }
     } catch (err) {
-      logger.error({ err, keyword }, "Failed to scrape posts for keyword, trying jobs actor");
-
+      logger.error({ err, keyword }, "Posts scraper failed for keyword, trying jobs scraper");
       try {
         const jobPosts = await scrapeLinkedInJobs(keyword, Math.ceil(maxResultsPerKeyword / 2));
         for (const post of jobPosts) {
@@ -82,6 +88,14 @@ export async function scrapeLinkedInPosts(
   return { posts: allPosts, keywordMap };
 }
 
+/**
+ * Scrape LinkedIn jobs using worldunboxer~rapid-linkedin-scraper (free actor)
+ * Input: searchUrl = LinkedIn jobs search URL, maxItems = N
+ * Output fields: job_id, job_url, job_title, company_name, company_url,
+ *                location, time_posted, num_applicants, salary_range,
+ *                job_description, seniority_level, employment_type,
+ *                job_function, industries, easy_apply, apply_url
+ */
 export async function scrapeLinkedInJobs(
   keyword: string,
   maxResults = 25
@@ -90,37 +104,45 @@ export async function scrapeLinkedInJobs(
   const posts: LinkedInPost[] = [];
 
   try {
-    const run = await client.actor("bebity/linkedin-jobs-scraper").call({
-      queries: keyword,
-      maxResults,
-      proxy: { useApifyProxy: true },
+    const searchUrl = `https://www.linkedin.com/jobs/search/?keywords=${encodeURIComponent(keyword)}`;
+
+    const run = await client.actor("worldunboxer/rapid-linkedin-scraper").call({
+      searchUrl,
+      maxItems: maxResults,
     });
 
     const { items } = await client.dataset(run.defaultDatasetId).listItems();
+    logger.info({ keyword, count: items.length }, "Fetched jobs from Apify");
 
     for (const item of items) {
       const raw = item as Record<string, unknown>;
-      const postId = String(raw["id"] || raw["jobId"] || raw["postId"] || `job-${Math.random().toString(36).slice(2)}`);
+      const jobId = String(raw["job_id"] || raw["jobId"] || raw["id"] || "");
+      if (!jobId) continue;
 
       const descriptionParts = [
-        `Role: ${raw["title"] || raw["role"] || ""}`,
-        `Company: ${raw["companyName"] || raw["company"] || ""}`,
-        `Location: ${raw["location"] || ""}`,
-        `Description: ${raw["description"] || raw["descriptionText"] || raw["jobDescription"] || ""}`,
-        `Salary: ${raw["salary"] || raw["salaryInfo"] || ""}`,
-        `Posted: ${raw["postedAt"] || raw["publishedAt"] || raw["date"] || ""}`,
-      ].filter((line) => !line.endsWith(": ")).join("\n");
+        raw["job_title"] ? `Role: ${raw["job_title"]}` : null,
+        raw["company_name"] ? `Company: ${raw["company_name"]}` : null,
+        raw["location"] ? `Location: ${raw["location"]}` : null,
+        raw["seniority_level"] ? `Seniority: ${raw["seniority_level"]}` : null,
+        raw["employment_type"] ? `Type: ${raw["employment_type"]}` : null,
+        raw["salary_range"] ? `Salary: ${raw["salary_range"]}` : null,
+        raw["num_applicants"] ? `Applicants: ${raw["num_applicants"]}` : null,
+        raw["industries"] ? `Industries: ${raw["industries"]}` : null,
+        raw["job_description"] ? `Description: ${String(raw["job_description"]).slice(0, 2000)}` : null,
+      ].filter(Boolean).join("\n");
 
-      if (descriptionParts.length > 50) {
-        posts.push({
-          postId: `li-job-${postId}`,
-          text: descriptionParts,
-          authorName: String(raw["companyName"] || raw["company"] || ""),
-          authorLinkedinUrl: String(raw["companyUrl"] || raw["companyLinkedinUrl"] || ""),
-          postUrl: String(raw["jobUrl"] || raw["url"] || raw["link"] || ""),
-          datePosted: String(raw["postedAt"] || raw["publishedAt"] || raw["date"] || ""),
-        });
-      }
+      if (descriptionParts.length < 30) continue;
+
+      posts.push({
+        postId: `li-job-${jobId}`,
+        text: descriptionParts,
+        authorName: String(raw["company_name"] || ""),
+        authorLinkedinUrl: String(raw["company_url"] || raw["apply_url"] || ""),
+        postUrl: String(raw["job_url"] || raw["apply_url"] || ""),
+        datePosted: String(raw["time_posted"] || ""),
+        likesCount: 0,
+        commentsCount: 0,
+      });
     }
   } catch (err) {
     logger.error({ err, keyword }, "Failed to scrape LinkedIn jobs");
@@ -132,15 +154,16 @@ export async function scrapeLinkedInJobs(
 
 function extractPostId(raw: Record<string, unknown>): string | null {
   const id =
+    raw["urn"] ||
     raw["id"] ||
     raw["postId"] ||
-    raw["urn"] ||
     raw["activityId"] ||
+    raw["shareUrn"] ||
     raw["postUrn"];
 
   if (id) return String(id);
 
-  const url = String(raw["postUrl"] || raw["url"] || "");
+  const url = String(raw["url"] || raw["postUrl"] || "");
   const match = url.match(/activity[:-](\d+)/);
   if (match) return match[1];
 
