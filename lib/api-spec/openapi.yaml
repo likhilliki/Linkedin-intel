@@ -1,15 +1,20 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: LinkedIn Intelligence & Job Scraper API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: scraper
+    description: Scraper operations
+  - name: keywords
+    description: Keyword management
+  - name: jobs
+    description: Job records
 paths:
   /healthz:
     get:
@@ -24,6 +29,193 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /scraper/run:
+    post:
+      operationId: runScraper
+      tags: [scraper]
+      summary: Trigger a scraping run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunScraperRequest"
+      responses:
+        "200":
+          description: Scraping run started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunScraperResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /scraper/status/{runId}:
+    get:
+      operationId: getScraperStatus
+      tags: [scraper]
+      summary: Get scraper run status
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Run status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScraperRunStatus"
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /scraper/runs:
+    get:
+      operationId: listScraperRuns
+      tags: [scraper]
+      summary: List recent scraping runs
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScraperRunList"
+
+  /keywords:
+    get:
+      operationId: listKeywords
+      tags: [keywords]
+      summary: List all keywords
+      responses:
+        "200":
+          description: List of keywords
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeywordList"
+    post:
+      operationId: createKeyword
+      tags: [keywords]
+      summary: Add a keyword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateKeywordRequest"
+      responses:
+        "201":
+          description: Keyword created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Keyword"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /keywords/{id}:
+    delete:
+      operationId: deleteKeyword
+      tags: [keywords]
+      summary: Delete a keyword
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /jobs:
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      summary: List processed job records
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: keyword
+          in: query
+          schema:
+            type: string
+        - name: company
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of jobs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobList"
+
+  /jobs/stats:
+    get:
+      operationId: getJobStats
+      tags: [jobs]
+      summary: Get job statistics
+      responses:
+        "200":
+          description: Statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobStats"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +226,279 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+        - message
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required:
+        - success
+
+    RunScraperRequest:
+      type: object
+      properties:
+        keywords:
+          type: array
+          items:
+            type: string
+          description: Keywords to search for. Uses saved keywords if empty.
+        maxResults:
+          type: integer
+          default: 100
+          description: Max results per keyword
+        scrapeType:
+          type: string
+          enum: [posts, jobs, both]
+          default: both
+      required: []
+
+    RunScraperResponse:
+      type: object
+      properties:
+        runId:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+        keywords:
+          type: array
+          items:
+            type: string
+      required:
+        - runId
+        - status
+        - message
+        - keywords
+
+    ScraperRunStatus:
+      type: object
+      properties:
+        runId:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        totalFetched:
+          type: integer
+        totalProcessed:
+          type: integer
+        totalDuplicates:
+          type: integer
+        totalErrors:
+          type: integer
+        keywords:
+          type: array
+          items:
+            type: string
+        errorMessage:
+          type: string
+          nullable: true
+      required:
+        - runId
+        - status
+        - startedAt
+        - totalFetched
+        - totalProcessed
+        - totalDuplicates
+        - totalErrors
+        - keywords
+
+    ScraperRunList:
+      type: object
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScraperRunStatus"
+        total:
+          type: integer
+      required:
+        - runs
+        - total
+
+    Keyword:
+      type: object
+      properties:
+        id:
+          type: integer
+        keyword:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        active:
+          type: boolean
+      required:
+        - id
+        - keyword
+        - createdAt
+        - active
+
+    KeywordList:
+      type: object
+      properties:
+        keywords:
+          type: array
+          items:
+            $ref: "#/components/schemas/Keyword"
+      required:
+        - keywords
+
+    CreateKeywordRequest:
+      type: object
+      properties:
+        keyword:
+          type: string
+      required:
+        - keyword
+
+    JobRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+        postId:
+          type: string
+        role:
+          type: string
+          nullable: true
+        companyName:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        primarySkills:
+          type: string
+          nullable: true
+        secondarySkills:
+          type: string
+          nullable: true
+        mustToHave:
+          type: string
+          nullable: true
+        yearsOfExperience:
+          type: string
+          nullable: true
+        lookingForCollegeStudents:
+          type: string
+          nullable: true
+        intern:
+          type: string
+          nullable: true
+        salaryPackage:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        hiringIntent:
+          type: string
+          nullable: true
+        authorName:
+          type: string
+          nullable: true
+        authorLinkedinUrl:
+          type: string
+          nullable: true
+        postUrl:
+          type: string
+          nullable: true
+        datePosted:
+          type: string
+          nullable: true
+        dateProcessed:
+          type: string
+          nullable: true
+        keywordMatched:
+          type: string
+          nullable: true
+        rawText:
+          type: string
+          nullable: true
+        sheetRowId:
+          type: integer
+          nullable: true
+      required:
+        - id
+        - postId
+
+    JobList:
+      type: object
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobRecord"
+        total:
+          type: integer
+      required:
+        - jobs
+        - total
+
+    JobStats:
+      type: object
+      properties:
+        totalJobs:
+          type: integer
+        totalRuns:
+          type: integer
+        jobsLast24h:
+          type: integer
+        jobsLast7d:
+          type: integer
+        topCompanies:
+          type: array
+          items:
+            type: object
+            properties:
+              company:
+                type: string
+              count:
+                type: integer
+            required:
+              - company
+              - count
+        topKeywords:
+          type: array
+          items:
+            type: object
+            properties:
+              keyword:
+                type: string
+              count:
+                type: integer
+            required:
+              - keyword
+              - count
+      required:
+        - totalJobs
+        - totalRuns
+        - jobsLast24h
+        - jobsLast7d
+        - topCompanies
+        - topKeywords
