@@ -1,4 +1,4 @@
-Linkedin intel — LinkedIn Intelligence & Job Scraper Agent with AI-powered extraction, Qdrant dedup, and Google Sheets sync.
+### Linkedin intel — LinkedIn Intelligence & Job Scraper Agent with AI-powered extraction, Qdrant dedup, and Google Sheets sync.
 
 ## Stack
 
