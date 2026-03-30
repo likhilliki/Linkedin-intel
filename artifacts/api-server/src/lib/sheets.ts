@@ -36,9 +36,12 @@ function getAuth() {
 }
 
 function getSheetId(): string {
-  const id = process.env["GOOGLE_SHEET_ID"];
-  if (!id) throw new Error("GOOGLE_SHEET_ID is not set");
-  return id;
+  const raw = process.env["GOOGLE_SHEET_ID"];
+  if (!raw) throw new Error("GOOGLE_SHEET_ID is not set");
+  // Accept full Sheet URL or raw ID
+  const match = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+  return raw.trim();
 }
 
 export async function ensureSheetHeaders(): Promise<void> {

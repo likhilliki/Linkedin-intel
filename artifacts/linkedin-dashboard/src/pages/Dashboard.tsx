@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ActivitySquare, Briefcase, Hash, Play, TrendingUp, Users } from "lucide-react"
-import { formatRelativeTime } from "@/lib/utils"
+import { cn, formatRelativeTime } from "@/lib/utils"
 import { Link } from "wouter"
 import { ResponsiveContainer, AreaChart, Area, XAxis, Tooltip } from "recharts"
 
