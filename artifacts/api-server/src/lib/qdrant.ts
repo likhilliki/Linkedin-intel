@@ -1,12 +1,12 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { logger } from "./logger";
 
 const COLLECTION_NAME = "linkedin_posts";
-const VECTOR_SIZE = 1536;
+const VECTOR_SIZE = 3072;
 
 let qdrantClient: QdrantClient | null = null;
-let openaiClient: OpenAI | null = null;
+let googleClient: GoogleGenerativeAI | null = null;
 
 export function getQdrantClient(): QdrantClient {
   if (!qdrantClient) {
@@ -18,29 +18,36 @@ export function getQdrantClient(): QdrantClient {
   return qdrantClient;
 }
 
-export function getOpenAIClient(): OpenAI {
-  if (!openaiClient) {
-    const apiKey = process.env["OPENAI_API_KEY"];
-    if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
-    openaiClient = new OpenAI({ apiKey });
+function getGoogleClient(): GoogleGenerativeAI {
+  if (!googleClient) {
+    const apiKey = process.env["GOOGLE_AI_STUDIO_KEY"];
+    if (!apiKey) throw new Error("GOOGLE_AI_STUDIO_KEY is not set");
+    googleClient = new GoogleGenerativeAI(apiKey);
   }
-  return openaiClient;
+  return googleClient;
 }
 
 export async function ensureCollection(): Promise<void> {
   const client = getQdrantClient();
   try {
     const collections = await client.getCollections();
-    const exists = collections.collections.some((c) => c.name === COLLECTION_NAME);
-    if (!exists) {
-      await client.createCollection(COLLECTION_NAME, {
-        vectors: {
-          size: VECTOR_SIZE,
-          distance: "Cosine",
-        },
-      });
-      logger.info({ collection: COLLECTION_NAME }, "Qdrant collection created");
+    const existing = collections.collections.find((c) => c.name === COLLECTION_NAME);
+
+    if (existing) {
+      const info = await client.getCollection(COLLECTION_NAME);
+      const currentSize = (info.config?.params?.vectors as { size?: number })?.size;
+      if (currentSize && currentSize !== VECTOR_SIZE) {
+        logger.warn({ currentSize, expectedSize: VECTOR_SIZE }, "Vector size mismatch — recreating collection");
+        await client.deleteCollection(COLLECTION_NAME);
+      } else {
+        return;
+      }
     }
+
+    await client.createCollection(COLLECTION_NAME, {
+      vectors: { size: VECTOR_SIZE, distance: "Cosine" },
+    });
+    logger.info({ collection: COLLECTION_NAME, size: VECTOR_SIZE }, "Qdrant collection created");
   } catch (err) {
     logger.error({ err }, "Failed to ensure Qdrant collection");
     throw err;
@@ -48,12 +55,10 @@ export async function ensureCollection(): Promise<void> {
 }
 
 export async function generateEmbedding(text: string): Promise<number[]> {
-  const client = getOpenAIClient();
-  const response = await client.embeddings.create({
-    model: "text-embedding-3-small",
-    input: text.slice(0, 8000),
-  });
-  return response.data[0].embedding;
+  const client = getGoogleClient();
+  const model = client.getGenerativeModel({ model: "gemini-embedding-001" });
+  const result = await model.embedContent(text.slice(0, 8000));
+  return result.embedding.values;
 }
 
 export async function isPostDuplicate(postId: string): Promise<boolean> {
@@ -61,12 +66,7 @@ export async function isPostDuplicate(postId: string): Promise<boolean> {
   try {
     const result = await client.scroll(COLLECTION_NAME, {
       filter: {
-        must: [
-          {
-            key: "post_id",
-            match: { value: postId },
-          },
-        ],
+        must: [{ key: "post_id", match: { value: postId } }],
       },
       limit: 1,
     });
@@ -91,10 +91,7 @@ export async function upsertPostVector(
       {
         id: numericId,
         vector: embedding,
-        payload: {
-          post_id: postId,
-          ...metadata,
-        },
+        payload: { post_id: postId, ...metadata },
       },
     ],
   });

@@ -68,6 +68,7 @@ async function buildAll() {
       "googleapis",
       "apify-client",
       "proxy-agent",
+      "@google/generative-ai",
       "firebase-admin",
       "@parcel/watcher",
       "@sentry/profiling-node",

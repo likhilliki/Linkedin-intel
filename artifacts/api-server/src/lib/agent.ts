@@ -155,7 +155,7 @@ async function executeRun(runId: string, keywords: string[], maxResults: number)
           .set({ totalProcessed, totalDuplicates, totalErrors })
           .where(eq(scraperRunsTable.runId, runId));
 
-        await sleep(500);
+        await sleep(4500);
       } catch (err) {
         totalErrors++;
         log.error({ err, postId: post.postId }, "Failed to process post");
